@@ -332,18 +332,21 @@ class Informe:
         """Mostra os informes de um fundo."""
         fundo_df = self.pd_df.sort_index()
 
-        # Pega informacoes do periodo todo
+        # Adiciona no dataframe informacoes da rentabilidade diaria e acumulada da cota
+        fundo_df["Rent. cota dia"] = fundo_df["VL_QUOTA"].pct_change()
+        fundo_df["Rent. acumulada"] = (
+            (1 + fundo_df["Rent. cota dia"]).cumprod() - 1
+        ) * 100
+        fundo_df["Rent. cota dia"] = fundo_df["Rent. cota dia"] * 100
+
+        # Calcula variacao no periodo selecionado:
+        # cota, numero de cotista e saldo captacao/resgate
         saldo_cotistas = fundo_df["NR_COTST"].iloc[-1] - fundo_df["NR_COTST"].iloc[0]
         rentabilidade_cota = (
             (fundo_df["VL_QUOTA"].iloc[-1] - fundo_df["VL_QUOTA"].iloc[0])
             / fundo_df["VL_QUOTA"].iloc[0]
         ) * 100
         saldo_capt = fundo_df["CAPTC_DIA"].sum() - fundo_df["RESG_DIA"].sum()
-
-        # Adiciona coluna com rentabilidade diaria da cota
-        fundo_df["Rentabilidade cota"] = (
-            (fundo_df["VL_QUOTA"] / fundo_df["VL_QUOTA"].shift(1)) - 1
-        ) * 100
 
         fundo_df.index.names = ["Data"]
         print(
@@ -353,7 +356,8 @@ class Informe:
                     self.csv_columns["VL_PATRIM_LIQ"]: self.reais_format.format,
                     self.csv_columns["CAPTC_DIA"]: self.reais_format.format,
                     self.csv_columns["RESG_DIA"]: self.reais_format.format,
-                    "Rentabilidade cota": "{:.2f}%".format,
+                    "Rent. cota dia": "{:.2f}%".format,
+                    "Rent. acumulada": "{:.2f}%".format,
                 }
             )
         )
@@ -392,7 +396,7 @@ class Informe:
 
         mes_df = pd.concat(
             [cota_s, dif_cotista_s, captacao_s.to_frame(name="Captacao")],
-            axis=1,
+            axis="columns",
             sort=True,
         )
         mes_df.dropna(inplace=True)
