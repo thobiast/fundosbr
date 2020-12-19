@@ -181,7 +181,7 @@ class Cadastral:
 
         Parametros:
             name                  (str): Parte do nome do fundo
-            fundo_classe          (str): Classe do fundo (acoes, mm, fixa cambial)
+            fundo_classe          (str): Classe do fundo (acoes, mm, fixa e cambial)
             all_situacoes  (True/False): Remove fundos com situacao cancelada
 
         Retorna um dataframe
@@ -190,7 +190,7 @@ class Cadastral:
         pd.set_option("max_rows", None)
         pd.set_option("display.width", None)
 
-        # Filtra fundo por nome
+        # Filtra fundo pelo nome
         if name:
             fundo_df = self.pd_df[
                 self.pd_df["DENOM_SOCIAL"].str.contains(name, na=False, case=False)
@@ -198,15 +198,15 @@ class Cadastral:
         else:
             fundo_df = self.pd_df
 
+        f_classe_dic = {
+            "acoes": "Fundo de Ações",
+            "multimercado": "Fundo Multimercado",
+            "cambial": "Fundo Cambial",
+            "rendafixa": "Fundo de Renda Fixa",
+        }
         # Filtra fundo por classe
-        if fundo_classe == "acoes":
-            fundo_df = fundo_df.loc[fundo_df["CLASSE"] == "Fundo de Ações"]
-        if fundo_classe == "multimercado":
-            fundo_df = fundo_df.loc[fundo_df["CLASSE"] == "Fundo Multimercado"]
-        if fundo_classe == "cambial":
-            fundo_df = fundo_df.loc[fundo_df["CLASSE"] == "Fundo Cambial"]
-        if fundo_classe == "rendafixa":
-            fundo_df = fundo_df.loc[fundo_df["CLASSE"] == "Fundo de Renda Fixa"]
+        if fundo_classe:
+            fundo_df = fundo_df.loc[fundo_df["CLASSE"] == f_classe_dic[fundo_classe]]
 
         # Remove fundos cancelados
         if not all_situacoes:
