@@ -87,6 +87,24 @@ def parse_parameters():
     informe_parser.add_argument("cnpj", help="CNPJ do fundo")
     informe_parser.set_defaults(func=cmd_informes_fundo)
 
+    # Compara fundos
+    compara_parser = subparsers.add_parser("compara", help="Comparas fundos")
+    compara_parser.add_argument(
+        "-datainicio", type=int, dest="datainicio", help="Data inicio (YYYYMM)"
+    )
+    compara_parser.add_argument(
+        "-datafim", type=int, dest="datafim", help="Data fim (YYYYMM)"
+    )
+    compara_parser.add_argument(
+        "-m",
+        "--mensal",
+        dest="mensal",
+        action="store_true",
+        help="Mostra estatistica mensal",
+    )
+    compara_parser.add_argument("cnpj", help="CNPJ do fundo")
+    compara_parser.set_defaults(func=cmd_compara_fundo)
+
     if len(sys.argv) < 2:
         parser.print_help()
         sys.exit(0)
@@ -145,8 +163,12 @@ class Cadastral:
         """Download do arquivo cadastral mais recente."""
         # Tenta baixar um arquivo cadastral dos ultimos 30 dias
         for num_d_ago in range(1, 30):
-            file_name = "inf_cadastral_fi_{}.csv".format(self.days_ago(num_d_ago))
+            data_to_download = self.days_ago(num_d_ago)
+            if datetime.datetime.strptime(data_to_download, "%Y%m%d").weekday() > 4:
+                log.debug("Pulando data %s. Final de semana", data_to_download)
+                continue
 
+            file_name = "inf_cadastral_fi_{}.csv".format(data_to_download)
             url = "{}/{}".format(URL_CADASTRAL_DIARIO, file_name)
             local_file = "{}/{}".format(DADOS_DIR, file_name)
 
@@ -169,6 +191,7 @@ class Cadastral:
 
     def load_csv(self):
         """Cria o DataFrame com o arquivo csv."""
+        log.debug("Carregando csv cadastral")
         create_dir(DADOS_DIR)
         self.download_inf_cadastral()
         self.pd_df = pd.read_csv(
@@ -216,6 +239,9 @@ class Cadastral:
 
     def busca_fundo_cnpj(self, cnpj):
         """Retorna dataframe de um fundo."""
+        if not isinstance(self.pd_df, pd.DataFrame):
+            self.load_csv()
+
         return self.pd_df.loc[cnpj]
 
     def fundo_social_nome(self, cnpj):
@@ -292,7 +318,6 @@ class Informe:
             return True
 
         log.debug("Tentando baixar arquivo do dia: %s", file_name)
-
         res = download_file(url, local_file)
         if res.status_code == 404:
             log.debug("Arquivo nao encontrado no site da cvm")
@@ -307,12 +332,18 @@ class Informe:
 
     def load_informe_csv(self, cnpj=None):
         """
-        Cria DataFrame com os dados dos arquivos csv baixados.
+        Cria DataFrame com os dados dos arquivos csv de informe.
 
         Parametros:
-            cnpj      (str): Cnpj do fundo para criar o DataFrame
+            cnpj      (str): Cnpj do(s) fundo(s) para criar o DataFrame.
+                             Cnpj(s) devem ser separados pelo caractere ','
                              Se nao especificado, cria com todos
         """
+        cnpj_list = []
+        if cnpj:
+            cnpj_list.extend(cnpj.split(","))
+        log.debug("cnpj: %s", cnpj_list)
+
         for file_mes in self.filenames:
             log.debug("pandas read_csv arquivo: %s", file_mes)
             informe_mensal = pd.read_csv(
@@ -323,14 +354,37 @@ class Informe:
                 parse_dates=True,
             )
             log.debug("Arquivo carregado com sucesso")
-            if cnpj:
-                self.pd_df = pd.concat([self.pd_df, informe_mensal.loc[cnpj]])
+            if cnpj_list:
+                try:
+                    self.pd_df = pd.concat([self.pd_df, informe_mensal.loc[cnpj_list]])
+                except KeyError:
+                    msg("red", "Erro: cnpj(s) '{}' nao encontrado".format(cnpj_list), 1)
             else:
                 self.pd_df = pd.concat([self.pd_df, informe_mensal])
+            log.debug("DataFrame criado com sucesso")
 
-    def mostra_informe_fundo(self, mensal=None):
+    def remove_index_cnpj(self):
+        """
+        Retorna dataframe sem cnpj no index.
+
+        Os methods dessa classe que mostram dados dos informes nao
+        suportam mais de um cnpj. Retorna dataframe com apenas data de index
+        """
+        fundo_df = self.pd_df
+
+        if "CNPJ_FUNDO" in fundo_df.index.names:
+            if fundo_df.index.unique(level="CNPJ_FUNDO").size > 1:
+                msg("red", "Erro: Este method nao suporta mais de um fundo", 1)
+            fundo_df.reset_index(level="CNPJ_FUNDO", drop=True, inplace=True)
+
+        return fundo_df
+
+    def mostra_informe_fundo(self):
         """Mostra os informes de um fundo."""
-        fundo_df = self.pd_df.sort_index()
+        fundo_df = self.remove_index_cnpj()
+
+        fundo_df.index.names = ["Data"]
+        fundo_df.sort_index(inplace=True)
 
         # Adiciona no dataframe informacoes da rentabilidade diaria e acumulada da cota
         fundo_df["Rent. cota dia"] = fundo_df["VL_QUOTA"].pct_change()
@@ -339,45 +393,52 @@ class Informe:
         ) * 100
         fundo_df["Rent. cota dia"] = fundo_df["Rent. cota dia"] * 100
 
-        # Calcula variacao no periodo selecionado:
-        # cota, numero de cotista e saldo captacao/resgate
-        saldo_cotistas = fundo_df["NR_COTST"].iloc[-1] - fundo_df["NR_COTST"].iloc[0]
-        rentabilidade_cota = (
+        return fundo_df.rename(columns=self.csv_columns).to_string(
+            formatters={
+                self.csv_columns["VL_TOTAL"]: self.reais_format.format,
+                self.csv_columns["VL_PATRIM_LIQ"]: self.reais_format.format,
+                self.csv_columns["CAPTC_DIA"]: self.reais_format.format,
+                self.csv_columns["RESG_DIA"]: self.reais_format.format,
+                "Rent. cota dia": "{:.2f}%".format,
+                "Rent. acumulada": "{:.2f}%".format,
+            }
+        )
+
+    def calc_valores_periodo(self):
+        """
+        Calcula valores do periodo.
+
+        Return: Dicionario:
+                    key: nome da medida
+                    value: valor da medida
+        """
+        fundo_df = self.remove_index_cnpj()
+
+        fundo_df.index.names = ["Data"]
+        fundo_df.sort_index(inplace=True)
+
+        cota = fundo_df["NR_COTST"].iloc[-1] - fundo_df["NR_COTST"].iloc[0]
+        rent = (
             (fundo_df["VL_QUOTA"].iloc[-1] - fundo_df["VL_QUOTA"].iloc[0])
             / fundo_df["VL_QUOTA"].iloc[0]
         ) * 100
-        saldo_capt = fundo_df["CAPTC_DIA"].sum() - fundo_df["RESG_DIA"].sum()
+        capt_resg = fundo_df["CAPTC_DIA"].sum() - fundo_df["RESG_DIA"].sum()
+
+        calc = {
+            "Saldo cotista": "{}".format(cota),
+            "Rentabilidade cota": "{:.2f}%".format(rent),
+            "Saldo entre captacao e resgate": "R${:,.2f}".format(capt_resg),
+        }
+
+        log.debug("calc: %s", calc)
+        return calc
+
+    def mostra_estatistica_mensal(self):
+        """Mostra estatistica mensal do fundo."""
+        fundo_df = self.remove_index_cnpj()
 
         fundo_df.index.names = ["Data"]
-        print(
-            fundo_df.rename(columns=self.csv_columns).to_string(
-                formatters={
-                    self.csv_columns["VL_TOTAL"]: self.reais_format.format,
-                    self.csv_columns["VL_PATRIM_LIQ"]: self.reais_format.format,
-                    self.csv_columns["CAPTC_DIA"]: self.reais_format.format,
-                    self.csv_columns["RESG_DIA"]: self.reais_format.format,
-                    "Rent. cota dia": "{:.2f}%".format,
-                    "Rent. acumulada": "{:.2f}%".format,
-                }
-            )
-        )
-        msg("cyan", "Saldo no periodo")
-
-        msg("cyan", "Numero de cotistas: ", end="")
-        msg("nocolor", "{}".format(saldo_cotistas))
-
-        msg("cyan", "Rentabilidade cota: ", end="")
-        msg("nocolor", "{:.2f}%".format(rentabilidade_cota))
-
-        msg("cyan", "Saldo entre captacao e resgate: ", end="")
-        msg("nocolor", "R${:,.2f}".format(saldo_capt))
-
-        if mensal:
-            self.mostra_estatistica_mensal(fundo_df)
-
-    def mostra_estatistica_mensal(self, fundo_df):
-        """Mostra estatistica mensal do fundo."""
-        msg("cyan", "\nEstatistica mensal")
+        fundo_df.sort_index(inplace=True)
 
         gp = fundo_df.groupby(
             [fundo_df.index.year.rename("ano"), fundo_df.index.month.rename("mes")]
@@ -408,18 +469,150 @@ class Informe:
                 1,
             )
 
-        print(
-            mes_df.rename(
-                columns={"VL_QUOTA": "Rentabilidade", "NR_COTST": "Dif. Cotistas"}
-            ).to_string(
-                justify="center",
-                formatters={
-                    "Rentabilidade": "{:.2f}%".format,
-                    "Dif. Cotistas": "{:.0f}".format,
-                    "Captacao": self.reais_format.format,
-                },
-            )
+        return mes_df.rename(
+            columns={"VL_QUOTA": "Rentabilidade", "NR_COTST": "Dif. Cotistas"}
+        ).to_string(
+            justify="center",
+            formatters={
+                "Rentabilidade": "{:.2f}%".format,
+                "Dif. Cotistas": "{:.0f}".format,
+                "Captacao": self.reais_format.format,
+            },
         )
+
+
+class Compara:
+    """Class para comparar performance dos fundos."""
+
+    def __init__(self, cadastral, informe, cnpjs):
+        """
+        Initialize cadastral class.
+
+        Parametros:
+            cadastral (obj): Instancia da classe Cadastral
+            informe   (obj): Instancia da classe Informe
+            cnpj      (str): Cnpj(s) devem ser separados pelo caractere ','
+        """
+        self.informe = informe
+        self.cadastral = cadastral
+        self.cnpjs = cnpjs.split(",")
+
+    def denom_social_cnpjs(self):
+        """
+        Consulta nome social dos cnpjs.
+
+        Return: dicionario
+                    Key: cnpj
+                    Value: nome social fundo
+        """
+        denom_social = {}
+        for cnpj in self.cnpjs:
+            denom_social[cnpj] = self.cadastral.fundo_social_nome(cnpj)
+
+        log.debug("denom social: %s", denom_social)
+        return denom_social
+
+    def rentabilidade_periodo(self):
+        """Mostra rentabilidade do periodo."""
+        # Coloca cpnj como coluna
+        fundo_df = self.informe.pd_df.reset_index(level="CNPJ_FUNDO")
+        fundo_df.sort_index(level="DT_COMPTC", inplace=True)
+
+        rent_s = (
+            (
+                fundo_df.groupby("CNPJ_FUNDO")["VL_QUOTA"].last()
+                / fundo_df.groupby("CNPJ_FUNDO")["VL_QUOTA"].first()
+            )
+            - 1
+        ) * 100
+        rent_df = rent_s.to_frame()
+
+        # Adiciona coluna com nome social dos fundos
+        denom_social = self.denom_social_cnpjs()
+        rent_df["Denominacao social"] = rent_df.index.map(
+            mapper=(lambda x: denom_social[x])
+        )
+
+        return rent_df.rename(columns={"VL_QUOTA": "Rentabilidade"}).to_string(
+            formatters={"Rentabilidade": "{:.2f}%".format}
+        )
+
+    def rentabilidade_mensal(self):
+        """Mostra rentabiliadde mensal dos fundos."""
+        fundo_df = self.informe.pd_df.reset_index(level="CNPJ_FUNDO")
+        fundo_df.sort_index(level="DT_COMPTC", inplace=True)
+
+        mes_ts = (
+            fundo_df.groupby("CNPJ_FUNDO")["VL_QUOTA"].resample("M").last().pct_change()
+            * 100
+        )
+        mes_df = mes_ts.to_frame(name="Rentabilidade")
+        mes_df = mes_df.pivot_table(
+            index="DT_COMPTC", columns="CNPJ_FUNDO", values="Rentabilidade"
+        )
+        mes_df.index.name = "Data"
+
+        return mes_df.dropna().to_string(float_format="{:.2f}%".format)
+
+    def compara_fundos(self, cnpj):
+        """
+        Compara performance entre fundos.
+
+        Parametros:
+            cnpj      (str): Cnpj(s) devem ser separados pelo caractere ','
+        """
+        # Cria dataframe do informe com os cnpj
+        self.informe.load_informe_csv(cnpj)
+
+        msg("cyan", "Rentabilidade do periodo:")
+        print(self.rentabilidade_periodo())
+
+        msg("cyan", "\nRentabilidade mensal:")
+        print(self.rentabilidade_mensal())
+
+
+##############################################################################
+# Validas datas passadas na linha de comando
+##############################################################################
+def retorna_datas(datainicio, datafim):
+    """Valida datas."""
+    # Menor data com dados disponiveis pela CVM
+    menor_data_disp = 200501
+    # Ano e mes corrente
+    ano_mes = int(datetime.datetime.now().strftime("%Y%m"))
+
+    # Se nao for especificado, retorna data atual
+    d_fim = datafim if datafim else datetime.datetime.now().strftime("%Y%m")
+    d_ini = datainicio if datainicio else datetime.datetime.now().strftime("%Y%m")
+    log.debug("data inicio: %s, data fim: %s", datainicio, datafim)
+
+    if int(d_ini) > int(d_fim):
+        msg("red", "Erro: Data de inicio maior que data fim", 1)
+
+    if int(d_ini) < menor_data_disp or int(d_fim) < menor_data_disp:
+        msg("red", "Erro data de inicio menor que: {}".format(menor_data_disp), 1)
+
+    if int(d_ini) > ano_mes or int(d_fim) > ano_mes:
+        msg("red", "Erro data de inicio ou fim maior que data de hoje", 1)
+
+    return d_ini, d_fim
+
+
+##############################################################################
+# Comando compara
+##############################################################################
+def cmd_compara_fundo(args):
+    """Compara performance dos fundos."""
+    datainicio, datafim = retorna_datas(args.datainicio, args.datafim)
+
+    inf_cadastral = Cadastral()
+    informe = Informe()
+    compara = Compara(inf_cadastral, informe, args.cnpj)
+
+    for data in range(int(datainicio), int(datafim) + 1, 1):
+        compara.informe.download_informe_mensal(data)
+
+    compara.compara_fundos(args.cnpj)
 
 
 ##############################################################################
@@ -427,14 +620,7 @@ class Informe:
 ##############################################################################
 def cmd_informes_fundo(args):
     """Busa informes dos fundos."""
-    # Valida valores de data inicio e data fim
-    datafim = args.datafim if args.datafim else datetime.datetime.now().strftime("%Y%m")
-    datainicio = (
-        args.datainicio if args.datainicio else datetime.datetime.now().strftime("%Y%m")
-    )
-    log.debug("data inicio: %s, data fim: %s", datainicio, datafim)
-    if int(datainicio) > int(datafim):
-        msg("red", "Erro: Data de inicio maior que data fim", 1)
+    datainicio, datafim = retorna_datas(args.datainicio, args.datafim)
 
     # Mostra informacoes cadastral do fundo
     inf_cadastral = Cadastral()
@@ -454,8 +640,20 @@ def cmd_informes_fundo(args):
     for data in range(int(datainicio), int(datafim) + 1, 1):
         informe.download_informe_mensal(data)
 
+    # Mostra os informes
     informe.load_informe_csv(args.cnpj)
-    informe.mostra_informe_fundo(args.mensal)
+    print(informe.mostra_informe_fundo())
+
+    # Calculo do periodo (cota, saldo cotistas, etc)
+    msg("cyan", "Saldo no periodo")
+    for key, value in informe.calc_valores_periodo().items():
+        msg("cyan", key, end=": ")
+        msg("nocolor", "{}".format(value))
+
+    # Rentabilidade mensal
+    if args.mensal:
+        msg("cyan", "Estatistica mensal:")
+        print(informe.mostra_estatistica_mensal())
 
 
 ##############################################################################
