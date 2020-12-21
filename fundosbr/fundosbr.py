@@ -105,6 +105,33 @@ def parse_parameters():
     compara_parser.add_argument("cnpj", help="CNPJ do fundo")
     compara_parser.set_defaults(func=cmd_compara_fundo)
 
+    # Rank dos fundos
+    rank_parser = subparsers.add_parser("rank", help="Rank fundos")
+    rank_parser.add_argument(
+        "tipo",
+        choices=["acoes", "multimercado", "cambial", "rendafixa"],
+        help="Tipo do fundo",
+    )
+    rank_parser.add_argument(
+        "-top", type=int, default=10, dest="top", help="Numero de fundos para retornar"
+    )
+    rank_type_group = rank_parser.add_mutually_exclusive_group(required=True)
+    rank_type_group.add_argument(
+        "-c",
+        "--cotistas",
+        dest="cotistas",
+        action="store_true",
+        help="Rank por numero de cotistas",
+    )
+    rank_type_group.add_argument(
+        "-p",
+        "--pl",
+        dest="patrimonio",
+        action="store_true",
+        help="Rank por patrimonio liquido",
+    )
+    rank_parser.set_defaults(func=cmd_rank_fundo)
+
     if len(sys.argv) < 2:
         parser.print_help()
         sys.exit(0)
@@ -209,10 +236,6 @@ class Cadastral:
 
         Retorna um dataframe
         """
-        pd.set_option("max_colwidth", None)
-        pd.set_option("max_rows", None)
-        pd.set_option("display.width", None)
-
         # Filtra fundo pelo nome
         if name:
             fundo_df = self.pd_df[
@@ -242,7 +265,10 @@ class Cadastral:
         if not isinstance(self.pd_df, pd.DataFrame):
             self.load_csv()
 
-        return self.pd_df.loc[cnpj]
+        # No arquivo cadastral alguns fundos tem o mesmo cnpj.
+        # Retorna o primeiro encontrado
+        fundo_df = self.pd_df.loc[[cnpj], :]
+        return fundo_df.iloc[0, :]
 
     def fundo_social_nome(self, cnpj):
         """Retorna o nome social do fundo."""
@@ -484,7 +510,7 @@ class Informe:
 class Compara:
     """Class para comparar performance dos fundos."""
 
-    def __init__(self, cadastral, informe, cnpjs):
+    def __init__(self, cadastral, informe, cnpjs=None):
         """
         Initialize cadastral class.
 
@@ -495,7 +521,8 @@ class Compara:
         """
         self.informe = informe
         self.cadastral = cadastral
-        self.cnpjs = cnpjs.split(",")
+        if cnpjs:
+            self.cnpjs = cnpjs.split(",")
 
     def denom_social_cnpjs(self):
         """
@@ -570,11 +597,56 @@ class Compara:
         msg("cyan", "\nRentabilidade mensal:")
         print(self.rentabilidade_mensal())
 
+    def rank_simples(self, tipo_fundo, top, col_filtro):
+        """
+        Retorna rank dos fundos considerando apenas o ultima posicao no informe.
+
+        Parametros:
+            tipo_fundo      (str): Classe do fundo (acoes, mm, fixa e cambial)
+            top             (int): Numero de fundos no rank
+            col_filtro      (str): Coluna do informe para fazer o rank
+        """
+        # Buscando cnpj dos fundos
+        self.cadastral.load_csv()
+        cadastral_df = self.cadastral.busca_fundos(fundo_classe=tipo_fundo)
+        # Apenas fundos em funcionamento
+        fundos_cnpj = cadastral_df.loc[
+            cadastral_df["SIT"] == "EM FUNCIONAMENTO NORMAL"
+        ].index.values.tolist()
+        log.debug("lista dos cnpjs carregado com sucesso")
+
+        # Cria dataframe do informe com os cnpj
+        self.informe.load_informe_csv()
+        log.debug("Filtrando os cnpj no informe")
+        fundo_df = self.informe.pd_df.loc[(fundos_cnpj,), [col_filtro]]
+        fundo_df.reset_index(level="CNPJ_FUNDO", inplace=True)
+        fundo_df.sort_index(level="DT_COMPTC", inplace=True)
+        fundo_df = (
+            fundo_df.groupby("CNPJ_FUNDO")
+            .last()
+            .sort_values(by=col_filtro, ascending=False)
+            .head(top)
+        )
+
+        # Addiciona nome social
+        self.cnpjs = fundo_df.index.values.tolist()
+        denom_social = self.denom_social_cnpjs()
+        fundo_df["Denominacao social"] = fundo_df.index.map(
+            mapper=(lambda x: denom_social[x])
+        )
+
+        return fundo_df.rename(
+            columns={
+                "NR_COTST": "Numero Cotistas",
+                "VL_PATRIM_LIQ": "Patrimonio liquido",
+            }
+        ).to_string(formatters={"Patrimonio liquido": "R${:,.2f}".format})
+
 
 ##############################################################################
 # Validas datas passadas na linha de comando
 ##############################################################################
-def retorna_datas(datainicio, datafim):
+def retorna_datas(datainicio=None, datafim=None):
     """Valida datas."""
     # Menor data com dados disponiveis pela CVM
     menor_data_disp = 200501
@@ -596,6 +668,31 @@ def retorna_datas(datainicio, datafim):
         msg("red", "Erro data de inicio ou fim maior que data de hoje", 1)
 
     return d_ini, d_fim
+
+
+##############################################################################
+# Comando rank
+##############################################################################
+def cmd_rank_fundo(args):
+    """Rank dos fundos."""
+    datainicio, datafim = retorna_datas()
+
+    inf_cadastral = Cadastral()
+    informe = Informe()
+    compara = Compara(inf_cadastral, informe)
+
+    for data in range(int(datainicio), int(datafim) + 1, 1):
+        compara.informe.download_informe_mensal(data)
+
+    if args.cotistas:
+        col_filtro = "NR_COTST"
+    if args.patrimonio:
+        col_filtro = "VL_PATRIM_LIQ"
+
+    pd.set_option("max_colwidth", None)
+    pd.set_option("max_rows", None)
+    pd.set_option("display.width", None)
+    print(compara.rank_simples(args.tipo, args.top, col_filtro))
 
 
 ##############################################################################
@@ -670,6 +767,9 @@ def cmd_busca_fundo(args):
         if fundo.empty:
             msg("red", "Erro: Fundo com nome {} nao encontrado".format(args.name), 1)
 
+        pd.set_option("max_colwidth", None)
+        pd.set_option("max_rows", None)
+        pd.set_option("display.width", None)
         print(
             fundo[["DENOM_SOCIAL", "SIT", "CLASSE"]].rename(
                 columns=Cadastral.csv_columns
