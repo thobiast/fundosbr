@@ -61,7 +61,7 @@ def test_mostra_informe_fundo(df_informe):
     assert x == expected_result_mostra_informe_fundo
 
 
-def test_calc_valores_periodo(df_informe):
+def test_calc_saldo_periodo(df_informe):
     expected_result = {
         "Saldo cotista": "15",
         "Rentabilidade cota": "180.00%",
@@ -70,11 +70,11 @@ def test_calc_valores_periodo(df_informe):
     fundosbr.log = Mock()
     informe = fundosbr.Informe()
     with patch.object(informe, "pd_df", df_informe):
-        x = informe.calc_valores_periodo()
+        x = informe.calc_saldo_periodo()
     assert x == expected_result
 
 
-def test_mostra_estatistica_mensal(df_informe):
+def test_calc_estatistica_mensal(df_informe):
     expected_result = """         Rentabilidade Dif. Cotistas Captacao
 ano  mes                                     
 2020 3       12.50%          4        R$3.00 
@@ -82,5 +82,5 @@ ano  mes
     fundosbr.log = Mock()
     informe = fundosbr.Informe()
     with patch.object(informe, "pd_df", df_informe):
-        x = informe.mostra_estatistica_mensal()
+        x = informe.calc_estatistica_mensal()
     assert x == expected_result

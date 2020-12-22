@@ -3,7 +3,7 @@
 """
 Script para mostrar dados de fundos de investimento.
 
-Busca dados do site da CVM
+Todos os dados usados sao baixados direto do site da CVM.
 """
 
 import argparse
@@ -26,7 +26,7 @@ URL_CADASTRAL_DIARIO = "http://dados.cvm.gov.br/dados/FI/CAD/DADOS"
 URL_INFORME_DIARIO = "http://dados.cvm.gov.br/dados/FI/DOC/INF_DIARIO/DADOS"
 
 # Diretorio para guardar os arquivos csv
-DADOS_DIR = "/tmp/fundosbr_dados"
+CSV_FILES_DIR = "/tmp/fundosbr_dados"
 
 
 ##############################################################################
@@ -197,7 +197,7 @@ class Cadastral:
 
             file_name = "inf_cadastral_fi_{}.csv".format(data_to_download)
             url = "{}/{}".format(URL_CADASTRAL_DIARIO, file_name)
-            local_file = "{}/{}".format(DADOS_DIR, file_name)
+            local_file = "{}/{}".format(CSV_FILES_DIR, file_name)
 
             if os.path.exists(local_file):
                 log.debug("Arquivo cadastral '%s' ja existe localmente", file_name)
@@ -216,10 +216,10 @@ class Cadastral:
             if self.filename:
                 break
 
-    def load_csv(self):
-        """Cria o DataFrame com o arquivo csv."""
+    def cria_df_cadastral(self):
+        """Cria o DataFrame com o arquivo csv de cadastro."""
         log.debug("Carregando csv cadastral")
-        create_dir(DADOS_DIR)
+        create_dir(CSV_FILES_DIR)
         self.download_inf_cadastral()
         self.pd_df = pd.read_csv(
             self.filename, sep=";", encoding="ISO-8859-1", index_col="CNPJ_FUNDO"
@@ -263,7 +263,7 @@ class Cadastral:
     def busca_fundo_cnpj(self, cnpj):
         """Retorna dataframe de um fundo."""
         if not isinstance(self.pd_df, pd.DataFrame):
-            self.load_csv()
+            self.cria_df_cadastral()
 
         # No arquivo cadastral alguns fundos tem o mesmo cnpj.
         # Retorna o primeiro encontrado
@@ -331,12 +331,12 @@ class Informe:
             data     (int): Data para baixar o arquivo.
                             formato do arquivo da CVM (YYYYMM)
         """
-        create_dir(DADOS_DIR)
+        create_dir(CSV_FILES_DIR)
 
         file_name = "inf_diario_fi_{}.csv".format(data)
 
         url = "{}/{}".format(URL_INFORME_DIARIO, file_name)
-        local_file = "{}/{}".format(DADOS_DIR, file_name)
+        local_file = "{}/{}".format(CSV_FILES_DIR, file_name)
 
         if os.path.exists(local_file):
             log.debug("Arquivo informe '%s' ja existe localmente", file_name)
@@ -356,7 +356,7 @@ class Informe:
 
         return False
 
-    def load_informe_csv(self, cnpj=None):
+    def cria_df_informe(self, cnpj=None):
         """
         Cria DataFrame com os dados dos arquivos csv de informe.
 
@@ -406,7 +406,13 @@ class Informe:
         return fundo_df
 
     def mostra_informe_fundo(self):
-        """Mostra os informes de um fundo."""
+        """
+        Mostra os informes de um fundo.
+
+        Adiciona no dataframe rentabilidade diaria e acumulada da cota
+
+        Return   Dataframe como string
+        """
         fundo_df = self.remove_index_cnpj()
 
         fundo_df.index.names = ["Data"]
@@ -430,9 +436,9 @@ class Informe:
             }
         )
 
-    def calc_valores_periodo(self):
+    def calc_saldo_periodo(self):
         """
-        Calcula valores do periodo.
+        Calcula saldo do periodo (cota, cotista e captacao/resgate).
 
         Return: Dicionario:
                     key: nome da medida
@@ -459,8 +465,12 @@ class Informe:
         log.debug("calc: %s", calc)
         return calc
 
-    def mostra_estatistica_mensal(self):
-        """Mostra estatistica mensal do fundo."""
+    def calc_estatistica_mensal(self):
+        """
+        Mostra estatistica mensal do fundo.
+
+        Return:  DataFrame como string
+        """
         fundo_df = self.remove_index_cnpj()
 
         fundo_df.index.names = ["Data"]
@@ -721,7 +731,7 @@ def cmd_informes_fundo(args):
 
     # Mostra informacoes cadastral do fundo
     inf_cadastral = Cadastral()
-    inf_cadastral.load_csv()
+    inf_cadastral.cria_df_cadastral()
     try:
         inf_cadastral.busca_fundo_cnpj(args.cnpj)
     except KeyError:
@@ -738,19 +748,19 @@ def cmd_informes_fundo(args):
         informe.download_informe_mensal(data)
 
     # Mostra os informes
-    informe.load_informe_csv(args.cnpj)
+    informe.cria_df_informe(args.cnpj)
     print(informe.mostra_informe_fundo())
 
     # Calculo do periodo (cota, saldo cotistas, etc)
     msg("cyan", "Saldo no periodo")
-    for key, value in informe.calc_valores_periodo().items():
+    for key, value in informe.calc_saldo_periodo().items():
         msg("cyan", key, end=": ")
         msg("nocolor", "{}".format(value))
 
     # Rentabilidade mensal
     if args.mensal:
         msg("cyan", "Estatistica mensal:")
-        print(informe.mostra_estatistica_mensal())
+        print(informe.calc_estatistica_mensal())
 
 
 ##############################################################################
@@ -759,7 +769,7 @@ def cmd_informes_fundo(args):
 def cmd_busca_fundo(args):
     """Busca informacoes cadastral sobre os fundos."""
     inf_cadastral = Cadastral()
-    inf_cadastral.load_csv()
+    inf_cadastral.cria_df_cadastral()
     if args.cnpj:
         inf_cadastral.mostra_detalhes_fundo(args.cnpj)
     else:
