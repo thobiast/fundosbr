@@ -49,48 +49,51 @@ def df_informe():
     return df
 
 
-def test_rentabilidade_periodo(df_informe):
-    expected_result = """                   Rentabilidade Denominacao social
-CNPJ_FUNDO                                         
-11.000.000/0000-00       180.00%              TESTE
-22.000.000/0000-00       -40.00%              TESTE"""
+def test_calc_rentabilidade_periodo(df_informe):
+    expected_result = pd.DataFrame(
+        {"Rentabilidade": [180.0, -40.0]},
+        index=["11.000.000/0000-00", "22.000.000/0000-00"],
+    )
+    expected_result.index.name = "CNPJ_FUNDO"
+
     fundosbr.log = Mock()
     cadastral = Mock()
     cadastral.fundo_social_nome = Mock(return_value="TESTE")
     informe = Mock()
-    cnpj = "11.000.000/0000-00,22.000.000/0000-00"
-    compara = fundosbr.Compara(cadastral, informe, cnpj)
+    compara = fundosbr.Compara(cadastral, informe)
+
     with patch.object(compara.informe, "pd_df", df_informe):
-        x = compara.rentabilidade_periodo()
-    assert x == expected_result
+        x = compara.calc_rentabilidade_periodo()
+    pd.testing.assert_frame_equal(x, expected_result)
 
 
 def test_rentabilidade_mensal(df_informe):
     expected_result = """CNPJ_FUNDO  11.000.000/0000-00  22.000.000/0000-00
 Data                                              
-2020-03-31              12.50%               7.69%
-2020-04-30              55.56%             -57.14%"""
+2020-03-31               12.50                7.69
+2020-04-30               55.56              -57.14"""
+
     fundosbr.log = Mock()
     cadastral = Mock()
     cadastral.fundo_social_nome = Mock(return_value="TESTE")
     informe = Mock()
-    cnpj = "11.000.000/0000-00,22.000.000/0000-00"
-    compara = fundosbr.Compara(cadastral, informe, cnpj)
+    compara = fundosbr.Compara(cadastral, informe)
     with patch.object(compara.informe, "pd_df", df_informe):
-        x = compara.rentabilidade_mensal()
-    assert x == expected_result
+        x = compara.calc_rentabilidade_mensal()
+    assert x.to_string(float_format="{:.2f}".format) == expected_result
 
 
-def test_denom_social_cnpjs():
-    expected_result = {
-        "11.000.000/0000-00": "nome fundo",
-        "22.000.000/0000-00": "nome fundo",
-    }
+def test_denom_social_cnpjs(df_informe):
+    nome_fundo = "meu fundo"
+
+    expected_result = df_informe
+    expected_result["enominacao social"] = nome_fundo
+
     fundosbr.log = Mock()
     cadastral = Mock()
-    cadastral.fundo_social_nome = Mock(return_value="nome fundo")
+    cadastral.fundo_social_nome = Mock(return_value=nome_fundo)
     informe = Mock()
-    cnpj = "11.000.000/0000-00,22.000.000/0000-00"
-    compara = fundosbr.Compara(cadastral, informe, cnpj)
-    x = compara.denom_social_cnpjs()
-    assert x == expected_result
+    compara = fundosbr.Compara(cadastral, informe)
+
+    x = compara.adiciona_denom_social(df_informe)
+    pd.testing.assert_frame_equal(x, expected_result)
