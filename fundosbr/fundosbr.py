@@ -429,6 +429,12 @@ class Informe:
                     log.debug("Erro: cnpj(s) '%s' nao encontrado", error)
                     ret_code = 0
                 if inval_cnpjs:
+                    msg(
+                        "yellow",
+                        "cnpj(s) {} nao encontrado(s) no informe {}".format(
+                            inval_cnpjs, file_mes
+                        ),
+                    )
                     ret_code = 0
             else:
                 self.pd_df = pd.concat([self.pd_df, informe_mensal])

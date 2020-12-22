@@ -86,8 +86,8 @@ Data
 def test_denom_social_cnpjs(df_informe):
     nome_fundo = "meu fundo"
 
-    expected_result = df_informe
-    expected_result["enominacao social"] = nome_fundo
+    expected_result = df_informe.copy()
+    expected_result["Denominacao social"] = nome_fundo
 
     fundosbr.log = Mock()
     cadastral = Mock()
