@@ -688,7 +688,8 @@ class Compara:
 
 
 ##############################################################################
-# Validas datas passadas na linha de comando
+# Valida as datas passadas na linha de comando
+# Retorna lista com todos os meses entre as datas no formato YYYYMM
 ##############################################################################
 def retorna_datas(datainicio=None, datafim=None):
     """Valida datas."""
@@ -711,7 +712,7 @@ def retorna_datas(datainicio=None, datafim=None):
     if int(d_ini) > ano_mes or int(d_fim) > ano_mes:
         msg("red", "Erro data de inicio ou fim maior que data de hoje", 1)
 
-    return d_ini, d_fim
+    return pd.period_range(d_ini, d_fim, freq="M").strftime("%Y%m").to_list()
 
 
 ##############################################################################
@@ -719,17 +720,13 @@ def retorna_datas(datainicio=None, datafim=None):
 ##############################################################################
 def cmd_rank_fundo(args):
     """Rank dos fundos."""
-    # Busca dados informes antigos apenas se for rentabilidade
-    if args.rentabilidade:
-        datainicio, datafim = retorna_datas(args.datainicio, args.datafim)
-    else:
-        datainicio, datafim = retorna_datas()
+    range_datas = retorna_datas(args.datainicio, args.datafim)
 
     inf_cadastral = Cadastral()
     informe = Informe()
     compara = Compara(inf_cadastral, informe)
 
-    for data in range(int(datainicio), int(datafim) + 1, 1):
+    for data in range_datas:
         compara.informe.download_informe_mensal(data)
 
     # Buscando cnpj dos fundos
@@ -759,13 +756,13 @@ def cmd_rank_fundo(args):
 ##############################################################################
 def cmd_compara_fundo(args):
     """Compara performance dos fundos."""
-    datainicio, datafim = retorna_datas(args.datainicio, args.datafim)
+    range_datas = retorna_datas(args.datainicio, args.datafim)
 
     inf_cadastral = Cadastral()
     informe = Informe()
     compara = Compara(inf_cadastral, informe)
 
-    for data in range(int(datainicio), int(datafim) + 1, 1):
+    for data in range_datas:
         compara.informe.download_informe_mensal(data)
 
     if not compara.informe.cria_df_informe(cnpj=args.cnpj):
@@ -779,7 +776,7 @@ def cmd_compara_fundo(args):
 ##############################################################################
 def cmd_informes_fundo(args):
     """Busa informes dos fundos."""
-    datainicio, datafim = retorna_datas(args.datainicio, args.datafim)
+    range_datas = retorna_datas(args.datainicio, args.datafim)
 
     # Mostra informacoes cadastral do fundo
     inf_cadastral = Cadastral()
@@ -796,7 +793,7 @@ def cmd_informes_fundo(args):
 
     # Informes
     informe = Informe()
-    for data in range(int(datainicio), int(datafim) + 1, 1):
+    for data in range_datas:
         informe.download_informe_mensal(data)
 
     # Carrega arquivo csv e cria o dataframe
