@@ -200,34 +200,27 @@ class Cadastral:
         self.filename = None
 
     def download_inf_cadastral(self):
-        """Download do arquivo cadastral mais recente."""
-        # Tenta baixar um arquivo cadastral dos ultimos 30 dias
-        for num_d_ago in range(1, 30):
-            data_to_download = self.days_ago(num_d_ago)
-            if datetime.datetime.strptime(data_to_download, "%Y%m%d").weekday() > 4:
-                log.debug("Pulando data %s. Final de semana", data_to_download)
-                continue
+        """Download do arquivo cadastral."""
+        file_name = "cad_fi.csv"
+        url = "{}/{}".format(URL_CADASTRAL_DIARIO, file_name)
+        local_file = "{}/{}".format(CSV_FILES_DIR, file_name)
 
-            file_name = "inf_cadastral_fi_{}.csv".format(data_to_download)
-            url = "{}/{}".format(URL_CADASTRAL_DIARIO, file_name)
-            local_file = "{}/{}".format(CSV_FILES_DIR, file_name)
-
-            if os.path.exists(local_file):
-                log.debug("Arquivo cadastral '%s' ja existe localmente", file_name)
-                self.filename = local_file
-            else:
-                log.debug(
-                    "Tentando baixar arquivo do dia: %s", (self.days_ago(num_d_ago))
+        if os.path.exists(local_file):
+            log.debug("Arquivo cadastral '%s' ja existe localmente", file_name)
+            self.filename = local_file
+        else:
+            log.debug("Tentando baixar arquivo: %s", url)
+            res = download_file(url, local_file)
+            if res.status_code == 404:
+                log.debug("Arquivo nao encontrado no site da cvm")
+                msg(
+                    "red",
+                    "Erro: Arquivo cadastral encontrado no site da CVM. {}".format(url),
+                    1,
                 )
-                res = download_file(url, local_file)
-                if res.status_code == 404:
-                    log.debug("Arquivo nao encontrado no site da cvm")
-                elif res.status_code == 200:
-                    log.debug("Arquivo baixado com sucesso: %s", file_name)
-                    self.filename = local_file
-
-            if self.filename:
-                break
+            elif res.status_code == 200:
+                log.debug("Arquivo baixado com sucesso: %s", file_name)
+                self.filename = local_file
 
     def cria_df_cadastral(self):
         """Cria o DataFrame com o arquivo csv de cadastro."""
@@ -305,18 +298,6 @@ class Cadastral:
         for col in fundo_df.index:
             msg("cyan", col, end=": ")
             msg("nocolor", fundo_df.loc[col])
-
-    @staticmethod
-    def days_ago(days=0, fmt_day="%Y%m%d"):
-        """
-        Retorna data como string.
-
-        Parametros:
-            days        (int): Numero de dias para tras para retornar
-            fmt_day     (str): Formato da data retornada
-        """
-        d_ago = datetime.datetime.now() - datetime.timedelta(days=days)
-        return d_ago.strftime(fmt_day)
 
 
 class Informe:
