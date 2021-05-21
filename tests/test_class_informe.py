@@ -38,7 +38,7 @@ def df_informe():
 
 expected_result_mostra_informe_fundo = """           Valor total carteira  Valor cota Valor patrimonio liquido Captacao dia Resgate dia  Numero cotistas Rent. cota dia Rent. acumulada
 Data                                                                                                                                         
-2020-02-01           R$1,234.51        10.0       R$1,111,111,113.61       R$1.00      R$0.00               10           nan%            nan%
+2020-02-01           R$1,234.51        10.0       R$1,111,111,113.61       R$1.00      R$0.00               10            NaN             NaN
 2020-02-03           R$1,234.52        12.0       R$1,111,111,113.62       R$2.00      R$0.00               11         20.00%          20.00%
 2020-02-15           R$1,234.53        14.0       R$1,111,111,113.63       R$0.00      R$0.00               12         16.67%          40.00%
 2020-02-22           R$1,234.54        12.0       R$1,111,111,113.64       R$4.00      R$1.00               13        -14.29%          20.00%
